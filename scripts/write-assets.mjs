@@ -1,11 +1,7 @@
-import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const names = (await readdir(join(here, "asset-parts"))).filter((name) => name.endsWith(".txt")).sort();
-const packed = (await Promise.all(names.map((name) => readFile(join(here, "asset-parts", name), "utf8")))).join("");
-const files = JSON.parse(packed);
+const files = {"public/icons/icon-192.png":"iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAIAAADdvvtQAAABgElEQVR42u3UQQ3AIAxAUSDTgITduc7UjPQyU4iYmhngRDgs5D0FbfPTHK0mmFWcAAEhIASEgEBACAgBISAQEAJCQAgIBISAEBACAgEhIASEgBAQCAgBISAEBAJCQAgIAYGAEBACQkAgIASEgBAQAgIBISAEhIBAQAgIASEgEBACQkAICASEgBAQAgIBISAEhIAQEAgIASEgBAQCQkAICAGBgFjt2G+lu79/Hu+5Th8IBISAEBACQkAgIASEgBAQCAgBISAEBAJCQAgIAYGAEBACQkAICASEgBAQAgIBISAEhIBAQAgIASEgEBACQkAICASEgBAQAkJAICAEhIAQEAgIASEgBARjOVp1BXwgBISAEBAICAEhIAQEAkJACAgBgYAQEAJCQCAgBISAEBACAgEhIASEgEBACAgBISAQEAJCQAgIBISAEBACQkAgIASEgBAQCAgBISAEBAJCQAgIAYGAEBACQkAICASEgBAQAgIBISAEhIBAQAgIASEgEBBLfeG9BidZANMEAAAAAElFTkSuQmCC","public/icons/icon-512.png":"iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAA5klEQVR42u3dMQ3AIBBAUY5UQyV074qpGmHBVEWgBgskJKXD+wa48HLzRb3PpH1lXwAAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAAABACAAAAQAgAAAEAAAAgBAAAAIAADNdfxnlOftXz7XymUDBAAAAAEAIAAABACAAAAQAAACAEAAAAgAAAEAIAAABACAAAAQAAACAEAAAAgAAK0UTprbAAACAEAAAAgAAAEAIAAABACAAAAQAAACAEAAAAgAAAEAIAAABACAAAAQAAACAEAAAAgAAAEAIAAANNcAM4cFpxgaK7IAAAAASUVORK5CYII=","public/samples/messenger.png":"PLACEHOLDER"};
 const root = process.cwd();
 
 for (const [path, data] of Object.entries(files)) {
