@@ -1,1 +1,1 @@
-Snaplist is a to-do list you can type into, or fill from a screenshot of a Messenger chat, a text, or an email. The screenshot is read in the browser and is not uploaded.
+Snaplist is a to-do list you can type into, or fill from a screenshot of a Messenger chat, a text, or an email. A model reads the screenshot and creates the tasks. The image is not saved. Set `OPENAI_API_KEY` for your own screenshots. The built-in samples work without it.

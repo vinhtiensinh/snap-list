@@ -5,7 +5,7 @@
     "dev": "node scripts/write-assets.mjs && next dev",
     "build": "node scripts/write-assets.mjs && next build && node scripts/migrate.mjs",
     "start": "next start",
-    "test": "tsx --test src/lib/extract.test.ts src/lib/validate.test.ts src/lib/todos.test.ts",
+    "test": "tsx --test src/lib/extract.test.ts src/lib/validate.test.ts src/lib/todos.test.ts src/lib/capture.test.ts",
     "write-assets": "node scripts/write-assets.mjs"
   },
   "dependencies": {
@@ -13,8 +13,7 @@
     "next": "^15.5.6",
     "pg": "^8.16.3",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tesseract.js": "5.1.1"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.19.1",
