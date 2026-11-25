@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+.pglite
+*.log
+.env
+.env.*
+tsconfig.tsbuildinfo
+public/tesseract/
+public/icons/*.png
+public/samples/*.png
