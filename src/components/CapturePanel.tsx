@@ -1,15 +1,26 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { detectSource, extractCandidates, preferredChecked } from "@/lib/extract";
-import { recognizeImages } from "@/lib/ocr";
-import { SOURCE_LABELS, type Source, type TodoInput } from "@/lib/types";
+import { PRIORITIES, SOURCE_LABELS, type Priority, type Source, type TodoInput } from "@/lib/types";
 
 const CAPTURE_SOURCES: Exclude<Source, "manual">[] = ["messenger", "sms", "email", "other"];
-const MAX_IMAGES = 5;
-const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGES = 3;
+const MAX_BYTES = 4 * 1024 * 1024;
 
-type Draft = { id: string; text: string; checked: boolean };
+type Draft = {
+  id: string;
+  title: string;
+  notes: string;
+  priority: Priority;
+  dueOn: string;
+  checked: boolean;
+};
+
+type CaptureResponse = {
+  source: Exclude<Source, "manual">;
+  reader: "openai" | "sample";
+  tasks: { title: string; notes: string; priority: Priority; dueOn: string | null }[];
+};
 
 export function CapturePanel({
   onClose,
@@ -23,8 +34,7 @@ export function CapturePanel({
   const [source, setSource] = useState<Exclude<Source, "manual">>("other");
   const [sourceTouched, setSourceTouched] = useState(false);
   const [drafts, setDrafts] = useState<Draft[]>([]);
-  const [rawText, setRawText] = useState("");
-  const [asOne, setAsOne] = useState(false);
+  const [sample, setSample] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [reading, setReading] = useState("");
   const [error, setError] = useState("");
@@ -36,10 +46,10 @@ export function CapturePanel({
     sourceTouchedRef.current = sourceTouched;
   }, [sourceTouched]);
 
-  async function readFiles(files: File[]) {
+  async function readCapture(payload: { images?: File[]; text?: string }) {
     setError("");
-    const images = files.filter((file) => file.type.startsWith("image/"));
-    if (images.length === 0) {
+    const images = payload.images ?? [];
+    if (images.some((file) => !file.type.startsWith("image/"))) {
       setError("That file isn’t a screenshot. Choose an image.");
       return;
     }
@@ -48,36 +58,40 @@ export function CapturePanel({
       return;
     }
     if (images.some((file) => file.size > MAX_BYTES)) {
-      setError("Each screenshot needs to be under 8 MB.");
+      setError("Each screenshot needs to be under 4 MB.");
       return;
     }
-    setReading("Reading the screenshot…");
+    setReading("Reading the screenshot into tasks…");
     try {
-      const text = await recognizeImages(images, (done, total, ratio) => {
-        const percent = Math.round(ratio * 100);
-        const which = total > 1 ? ` ${Math.min(done + 1, total)} of ${total}` : "";
-        setReading(`Reading screenshot${which}… ${percent}%`);
+      const body = new FormData();
+      body.append("today", localDate());
+      for (const image of images) body.append("image", image);
+      if (payload.text?.trim()) body.append("text", payload.text.trim());
+      const response = await fetch("/api/capture", { method: "POST", body });
+      const payloadBody = (await response.json().catch(() => ({}))) as CaptureResponse & { error?: unknown };
+      if (!response.ok) {
+        throw new Error(typeof payloadBody.error === "string" ? payloadBody.error : "Couldn’t read that screenshot.");
+      }
+      const next = (payloadBody.tasks ?? []).map((task) => {
+        const priority: Priority = task.priority === "low" || task.priority === "high" ? task.priority : "normal";
+        return {
+          id: crypto.randomUUID(),
+          title: task.title,
+          notes: task.notes ?? "",
+          priority,
+          dueOn: task.dueOn ?? "",
+          checked: true,
+        };
       });
-      applyText(text, { replace: true });
-    } catch {
-      setError("Couldn’t read that screenshot. Try a clearer image, or paste the message.");
+      setDrafts(next);
+      setSample(payloadBody.reader === "sample");
+      if (!sourceTouchedRef.current && payloadBody.source) setSource(payloadBody.source);
+      if (next.length === 0) setError("The model didn’t find a task in that screenshot.");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Couldn’t read that screenshot.");
     } finally {
       setReading("");
       if (inputRef.current) inputRef.current.value = "";
-    }
-  }
-
-  function applyText(text: string, options: { replace: boolean }) {
-    const next = extractCandidates(text).map((line) => ({
-      id: crypto.randomUUID(),
-      text: line,
-      checked: preferredChecked(line),
-    }));
-    setRawText(text.trim());
-    setDrafts((current) => (options.replace ? next : [...current, ...next]));
-    if (!sourceTouchedRef.current) setSource(detectSource(text));
-    if (next.length === 0) {
-      setError("No task text turned up in that screenshot. Paste the message instead.");
     }
   }
 
@@ -86,10 +100,10 @@ export function CapturePanel({
       const files = images.map(
         (blob, index) => new File([blob], `share-${index}.png`, { type: blob.type || "image/png" }),
       );
-      void readFiles(files);
+      void readCapture({ images: files, text });
       return;
     }
-    if (text.trim()) applyText(text, { replace: true });
+    if (text.trim()) void readCapture({ text });
   }
 
   useShareIntake(applyShare);
@@ -100,41 +114,29 @@ export function CapturePanel({
       const response = await fetch(`/samples/${name}.png`);
       if (!response.ok) throw new Error("missing sample");
       const blob = await response.blob();
-      await readFiles([new File([blob], `${name}.png`, { type: "image/png" })]);
+      await readCapture({ images: [new File([blob], `${name}.png`, { type: "image/png" })] });
     } catch {
       setError("The sample screenshot didn’t load.");
     }
   }
 
   async function addSelected() {
-    const chosen = drafts.filter((draft) => draft.checked && draft.text.trim());
+    const chosen = drafts.filter((draft) => draft.checked && draft.title.trim());
     if (chosen.length === 0) return;
-    const items: TodoInput[] = asOne
-      ? [
-          {
-            title: chosen[0]!.text.trim(),
-            notes: chosen.slice(1).map((draft) => draft.text.trim()).join("\n"),
-            source,
-            priority: "normal",
-            dueOn: null,
-            completed: false,
-          },
-        ]
-      : chosen.map((draft) => ({
-          title: draft.text.trim(),
-          notes: "",
-          source,
-          priority: "normal",
-          dueOn: null,
-          completed: false,
-        }));
+    const items: TodoInput[] = chosen.map((draft) => ({
+      title: draft.title.trim(),
+      notes: draft.notes.trim(),
+      source,
+      priority: draft.priority,
+      dueOn: draft.dueOn || null,
+      completed: false,
+    }));
     setSaving(true);
     setError("");
     try {
       await onAdd(items);
       setDrafts([]);
-      setRawText("");
-      setAsOne(false);
+      setSample(false);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Couldn’t add those tasks.");
     } finally {
@@ -142,7 +144,11 @@ export function CapturePanel({
     }
   }
 
-  const selectedCount = drafts.filter((draft) => draft.checked && draft.text.trim()).length;
+  function updateDraft(id: string, patch: Partial<Draft>) {
+    setDrafts((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
+  }
+
+  const selectedCount = drafts.filter((draft) => draft.checked && draft.title.trim()).length;
 
   return (
     <section className="capture" aria-label="Add tasks from a screenshot">
@@ -155,7 +161,8 @@ export function CapturePanel({
         ) : null}
       </div>
       <p className="lede">
-        Share a shot of a Messenger chat, a text, or an email. The image is read on this device and is not uploaded.
+        Share a shot of a Messenger chat, a text, or an email. A model reads it and turns the requests into tasks. The
+        image is not saved.
       </p>
       <div
         className={dragging ? "dropzone is-dragging" : "dropzone"}
@@ -167,13 +174,13 @@ export function CapturePanel({
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          void readFiles(Array.from(event.dataTransfer.files));
+          void readCapture({ images: Array.from(event.dataTransfer.files) });
         }}
         onPaste={(event) => {
           const files = Array.from(event.clipboardData.files);
           if (files.length > 0) {
             event.preventDefault();
-            void readFiles(files);
+            void readCapture({ images: files });
           }
         }}
       >
@@ -185,7 +192,7 @@ export function CapturePanel({
           accept="image/*"
           multiple
           onChange={(event) => {
-            void readFiles(Array.from(event.target.files ?? []));
+            void readCapture({ images: Array.from(event.target.files ?? []) });
           }}
         />
         <label className="stamp" htmlFor={inputId}>
@@ -216,19 +223,20 @@ export function CapturePanel({
           id="pasted-message"
           rows={3}
           value={pasted}
-          placeholder="Paste a message if the screenshot is hard to read."
+          placeholder="Paste a message if you don’t have the screenshot."
           onChange={(event) => setPasted(event.target.value)}
         />
-        <button
-          type="button"
-          disabled={pasted.trim() === ""}
-          onClick={() => applyText(pasted, { replace: true })}
-        >
-          Read pasted text
+        <button type="button" disabled={pasted.trim() === ""} onClick={() => void readCapture({ text: pasted })}>
+          Turn pasted text into tasks
         </button>
       </div>
       {drafts.length > 0 ? (
         <div className="review">
+          {sample ? (
+            <p className="hint">
+              This sample is filled in here. Your own screenshots are sent to the model and are not saved.
+            </p>
+          ) : null}
           <div className="source-picker" role="group" aria-label="Where this came from">
             {CAPTURE_SOURCES.map((value) => (
               <button
@@ -250,43 +258,61 @@ export function CapturePanel({
                 <input
                   type="checkbox"
                   checked={draft.checked}
-                  onChange={() =>
-                    setDrafts((current) =>
-                      current.map((item) => (item.id === draft.id ? { ...item, checked: !item.checked } : item)),
-                    )
-                  }
-                  aria-label={`Include “${draft.text}”`}
+                  onChange={() => updateDraft(draft.id, { checked: !draft.checked })}
+                  aria-label={`Include “${draft.title}”`}
                 />
-                <input
-                  value={draft.text}
-                  maxLength={280}
-                  aria-label="Task from the screenshot"
-                  onChange={(event) =>
-                    setDrafts((current) =>
-                      current.map((item) => (item.id === draft.id ? { ...item, text: event.target.value } : item)),
-                    )
-                  }
-                />
+                <div className="draft-fields">
+                  <input
+                    value={draft.title}
+                    maxLength={280}
+                    aria-label="Task from the screenshot"
+                    onChange={(event) => updateDraft(draft.id, { title: event.target.value })}
+                  />
+                  <div className="draft-meta">
+                    <input
+                      type="date"
+                      value={draft.dueOn}
+                      aria-label="Due date"
+                      onChange={(event) => updateDraft(draft.id, { dueOn: event.target.value })}
+                    />
+                    <select
+                      value={draft.priority}
+                      aria-label="Priority"
+                      onChange={(event) => updateDraft(draft.id, { priority: event.target.value as Priority })}
+                    >
+                      {PRIORITIES.map((priority) => (
+                        <option key={priority} value={priority}>
+                          {priority}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    rows={2}
+                    value={draft.notes}
+                    maxLength={4000}
+                    aria-label="Notes"
+                    placeholder="Notes"
+                    onChange={(event) => updateDraft(draft.id, { notes: event.target.value })}
+                  />
+                </div>
               </li>
             ))}
           </ul>
-          <label className="check-line">
-            <input type="checkbox" checked={asOne} onChange={(event) => setAsOne(event.target.checked)} />
-            Add the ticked lines as one task
-          </label>
           <button className="stamp" type="button" disabled={saving || selectedCount === 0} onClick={() => void addSelected()}>
-            {saving ? "Adding…" : asOne ? "Add 1 task" : `Add ${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}`}
+            {saving ? "Adding…" : `Add ${selectedCount} ${selectedCount === 1 ? "task" : "tasks"}`}
           </button>
-          {rawText ? (
-            <details>
-              <summary>Text read from the image</summary>
-              <pre>{rawText}</pre>
-            </details>
-          ) : null}
         </div>
       ) : null}
     </section>
   );
+}
+
+function localDate(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${now.getFullYear()}-${month}-${String(day)}`;
 }
 
 function useShareIntake(onShare: (text: string, images: Blob[]) => void) {
